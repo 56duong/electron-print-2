@@ -522,7 +522,30 @@ async function printDirectUsb(deviceKey, buffer) {
     }
 
     if (!chosen) {
-      throw new Error('No USB bulk OUT endpoint was found.');
+      const details = interfaces.map((iface) => ({
+        interface: iface.id,
+        alternate: iface.altSetting,
+        endpoints: (iface.endpoints || []).map((ep) => ({
+          address: ep.address,
+          direction: ep.direction,
+          transferType: ep.transferType,
+          typeName: {
+            0: 'control',
+            1: 'isochronous',
+            2: 'bulk',
+            3: 'interrupt'
+          }[ep.transferType] || 'unknown'
+        }))
+      }));
+
+      console.error(
+        'USB interfaces:',
+        JSON.stringify(details, null, 2)
+      );
+
+      throw new Error(
+        'No USB bulk OUT endpoint was found. Check the app console for USB interface details.'
+      );
     }
 
     await new Promise((resolve, reject) => {
