@@ -521,20 +521,38 @@ async function printDirectUsb(deviceKey, buffer) {
     device.open();
     opened = true;
 
-    // Find the first interface that has a bulk OUT endpoint (bit 7 of the address clear = OUT).
+    const interfaces = device.interfaces || [];
+    console.log('[USB] printDirectUsb v3. Interfaces reported:', interfaces.length);
+    console.log('[USB] Details:', JSON.stringify(interfaces.map((iface) => ({
+      id: iface.id,
+      endpoints: (iface.endpoints || []).map((ep) => ({
+        address: ep.address,
+        direction: ep.direction,
+        transferType: ep.transferType
+      }))
+    }))));
+
+    const isOut = (ep) => ep.direction === 'out' || (Number(ep.address) & 0x80) === 0;
+    const isBulk = (ep) => Number(ep.transferType) === USB_TRANSFER_TYPE_BULK || String(ep.transferType).toLowerCase() === 'bulk';
+
+    // Prefer a bulk OUT endpoint; fall back to any OUT endpoint if the device reports its type oddly.
     let chosen = null;
-    for (const iface of device.interfaces || []) {
-      const endpoint = (iface.endpoints || []).find(
-        (ep) => (Number(ep.address) & 0x80) === 0 && Number(ep.transferType) === USB_TRANSFER_TYPE_BULK
-      );
-      if (endpoint) {
-        chosen = { iface, endpoint };
-        break;
+    let fallback = null;
+    for (const iface of interfaces) {
+      for (const ep of iface.endpoints || []) {
+        if (!isOut(ep)) continue;
+        if (isBulk(ep)) { chosen = { iface, endpoint: ep }; break; }
+        if (!fallback) fallback = { iface, endpoint: ep };
       }
+      if (chosen) break;
+    }
+    if (!chosen && fallback) {
+      console.warn('[USB] No bulk OUT endpoint reported; falling back to the first OUT endpoint.');
+      chosen = fallback;
     }
 
     if (!chosen) {
-      throw new Error('No USB bulk OUT endpoint was found.');
+      throw new Error(`No USB OUT endpoint was found (interfaces reported: ${interfaces.length}).`);
     }
 
     console.log('[USB] Using interface', chosen.iface.id, 'endpoint', `0x${Number(chosen.endpoint.address).toString(16)}`);
