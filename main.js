@@ -509,11 +509,21 @@ async function printDirectUsb(deviceKey, buffer) {
     let chosen = null;
 
     for (const iface of interfaces) {
-      const endpoint = (iface.endpoints || []).find(
-        (item) =>
-          item.direction === 'out' &&
-          item.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK
-      );
+      const endpoints = iface.endpoints || [];
+
+      const endpoint = endpoints.find((ep) => {
+        const direction = String(ep.direction || '').toLowerCase();
+
+        const isOut =
+          direction === 'out' ||
+          (typeof ep.address === 'number' && (ep.address & 0x80) === 0);
+
+        const isBulk =
+          ep.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK ||
+          ep.transferType === 2;
+
+        return isOut && isBulk;
+      });
 
       if (endpoint) {
         chosen = { iface, endpoint };
@@ -522,31 +532,13 @@ async function printDirectUsb(deviceKey, buffer) {
     }
 
     if (!chosen) {
-      const details = interfaces.map((iface) => ({
-        interface: iface.id,
-        alternate: iface.altSetting,
-        endpoints: (iface.endpoints || []).map((ep) => ({
-          address: ep.address,
-          direction: ep.direction,
-          transferType: ep.transferType,
-          typeName: {
-            0: 'control',
-            1: 'isochronous',
-            2: 'bulk',
-            3: 'interrupt'
-          }[ep.transferType] || 'unknown'
-        }))
-      }));
-
-      console.error(
-        'USB interfaces:',
-        JSON.stringify(details, null, 2)
-      );
-
       throw new Error(
-        'No USB bulk OUT endpoint was found. Check the app console for USB interface details.'
+        'No USB bulk OUT endpoint was found. Check the USB endpoint property names.'
       );
     }
+
+    console.log('Selected USB interface:', chosen.iface.id);
+    console.log('Selected USB endpoint:', chosen.endpoint.address);
 
     await new Promise((resolve, reject) => {
       chosen.iface.claim((error) => error ? reject(error) : resolve());
