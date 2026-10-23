@@ -470,6 +470,16 @@ async function closeUsbDevice(device) {
   try { device.close(); } catch (_) { }
 }
 
+// Drop-in replacement for the whole printDirectUsb function in main.js.
+// Needs these from the rest of your file: usb, USBPRINT_PATH_RE, runUsbPrintScript, closeUsbDevice.
+
+const USB_CHUNK_SIZE = 4096; // bytes per bulk transfer
+
+function usbTransfer(endpoint, data) {
+  return new Promise((resolve, reject) => {
+    endpoint.transfer(data, (error) => (error ? reject(error) : resolve()));
+  });
+}
 
 async function printDirectUsb(deviceKey, buffer) {
   if (!deviceKey) {
@@ -478,9 +488,7 @@ async function printDirectUsb(deviceKey, buffer) {
 
   if (process.platform === 'win32') {
     if (!deviceKey.startsWith('usbprint:')) {
-      throw new Error(
-        'Select a Windows direct USB printer from the refreshed list.'
-      );
+      throw new Error('Select a Windows direct USB printer from the refreshed list.');
     }
 
     const devicePath = deviceKey.slice('usbprint:'.length);
@@ -501,48 +509,23 @@ async function printDirectUsb(deviceKey, buffer) {
   );
 
   if (!device) {
-    throw new Error(
-      'USB device not found. Unplug it, reconnect it, and refresh the list.'
-    );
+    throw new Error('USB device not found. Unplug it, reconnect it, and refresh the list.');
   }
 
   let opened = false;
   let claimedInterface = null;
-  let printError = null;
 
   try {
     console.log('[USB] Opening device:', deviceKey);
     device.open();
     opened = true;
 
-    const interfaces = device.interfaces || [];
-
-    console.log(
-      '[USB] Interfaces:',
-      JSON.stringify(
-        interfaces.map((iface) => ({
-          id: iface.id,
-          altSetting: iface.altSetting,
-          endpoints: (iface.endpoints || []).map((ep) => ({
-            address: ep.address,
-            direction: ep.direction,
-            transferType: ep.transferType
-          }))
-        }))
-      )
-    );
-
+    // Find the first interface that has a bulk OUT endpoint (bit 7 of the address clear = OUT).
     let chosen = null;
-
-    for (const iface of interfaces) {
+    for (const iface of device.interfaces || []) {
       const endpoint = (iface.endpoints || []).find(
-        (ep) =>
-          (ep.direction === 'out' ||
-            (typeof ep.address === 'number' &&
-              (ep.address & 0x80) === 0)) &&
-          ep.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK
+        (ep) => (Number(ep.address) & 0x80) === 0 && Number(ep.transferType) === usb.LIBUSB_TRANSFER_TYPE_BULK
       );
-
       if (endpoint) {
         chosen = { iface, endpoint };
         break;
@@ -553,54 +536,31 @@ async function printDirectUsb(deviceKey, buffer) {
       throw new Error('No USB bulk OUT endpoint was found.');
     }
 
-    console.log('[USB] Claiming interface:', chosen.iface.id);
+    console.log('[USB] Using interface', chosen.iface.id, 'endpoint', `0x${Number(chosen.endpoint.address).toString(16)}`);
 
-    await new Promise((resolve, reject) => {
-      chosen.iface.claim((error) => {
-        if (error) return reject(error);
-        resolve();
-      });
-    });
+    // On Linux the usblp kernel driver may own the printer; macOS has no such driver to detach.
+    if (process.platform === 'linux' && chosen.iface.isKernelDriverActive()) {
+      chosen.iface.detachKernelDriver();
+    }
 
+    // claim() is synchronous in node-usb: it takes no callback and throws on failure.
+    chosen.iface.claim();
     claimedInterface = chosen.iface;
+    console.log('[USB] Interface claimed.');
 
-    console.log(
-      '[USB] Transferring bytes:',
-      buffer.length,
-      'Endpoint:',
-      chosen.endpoint.address
-    );
-
-    await new Promise((resolve, reject) => {
-      chosen.endpoint.transfer(buffer, (error) => {
-        if (error) return reject(error);
-        resolve();
-      });
-    });
-
-    console.log('[USB] Transfer completed.');
+    for (let offset = 0; offset < buffer.length; offset += USB_CHUNK_SIZE) {
+      await usbTransfer(chosen.endpoint, buffer.subarray(offset, offset + USB_CHUNK_SIZE));
+    }
+    console.log('[USB] Transfer completed:', buffer.length, 'bytes.');
 
     return `Sent ${buffer.length} raw bytes directly to USB.`;
-  } catch (error) {
-    printError = error;
-    console.error('[USB] Print failed:', error);
-    throw error;
   } finally {
     if (claimedInterface) {
       try {
-        await new Promise((resolve, reject) => {
-          claimedInterface.release((error) => {
-            if (error) return reject(error);
-            resolve();
-          });
-        });
+        await new Promise((resolve) => claimedInterface.release(() => resolve()));
         console.log('[USB] Interface released.');
       } catch (error) {
         console.error('[USB] Interface release failed:', error);
-
-        if (!printError) {
-          throw error;
-        }
       }
     }
 
@@ -610,10 +570,6 @@ async function printDirectUsb(deviceKey, buffer) {
         console.log('[USB] Device closed.');
       } catch (error) {
         console.error('[USB] Device close failed:', error);
-
-        if (!printError) {
-          throw error;
-        }
       }
     }
   }
