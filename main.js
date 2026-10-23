@@ -409,19 +409,6 @@ async function printRawToSystemQueue(printerName, buffer) {
   throw new Error(`System printer queue printing is not supported on ${process.platform}.`);
 }
 
-
-function directUsbDeviceKey(device) {
-  const descriptor = device.deviceDescriptor || {};
-  return `${device.busNumber}:${device.deviceAddress}:${descriptor.idVendor}:${descriptor.idProduct}`;
-}
-
-function directUsbDeviceKey(device) {
-  const descriptor = device.deviceDescriptor || {};
-
-  return `${device.busNumber}:${device.deviceAddress}:${descriptor.idVendor}:${descriptor.idProduct}`;
-}
-
-
 async function listDirectUsbDevices() {
   if (process.platform === 'win32') {
     const output = await runUsbPrintScript('list');
@@ -480,7 +467,7 @@ async function closeUsbDevice(device) {
       try { iface.release(true, () => resolve()); } catch (_) { resolve(); }
     });
   }
-  try { device.close(); } catch (_) {}
+  try { device.close(); } catch (_) { }
 }
 
 
