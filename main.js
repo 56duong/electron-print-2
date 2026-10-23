@@ -478,7 +478,9 @@ async function printDirectUsb(deviceKey, buffer) {
 
   if (process.platform === 'win32') {
     if (!deviceKey.startsWith('usbprint:')) {
-      throw new Error('Select a Windows direct USB printer from the refreshed list.');
+      throw new Error(
+        'Select a Windows direct USB printer from the refreshed list.'
+      );
     }
 
     const devicePath = deviceKey.slice('usbprint:'.length);
@@ -492,38 +494,54 @@ async function printDirectUsb(deviceKey, buffer) {
     return `Sent ${buffer.length} raw bytes directly to the USB printer.`;
   }
 
-  // Keep your existing non-Windows libusb printing code below this point.
   const device = usb.getDeviceList().find(
     (item) =>
-      `${item.busNumber}:${item.deviceAddress}:${item.deviceDescriptor?.idVendor}:${item.deviceDescriptor?.idProduct}` === deviceKey
+      `${item.busNumber}:${item.deviceAddress}:${item.deviceDescriptor?.idVendor}:${item.deviceDescriptor?.idProduct}` ===
+      deviceKey
   );
 
   if (!device) {
-    throw new Error('USB device not found. Unplug it, reconnect it, and refresh the list.');
+    throw new Error(
+      'USB device not found. Unplug it, reconnect it, and refresh the list.'
+    );
   }
 
-  device.open();
+  let opened = false;
+  let claimedInterface = null;
+  let printError = null;
 
   try {
+    console.log('[USB] Opening device:', deviceKey);
+    device.open();
+    opened = true;
+
     const interfaces = device.interfaces || [];
+
+    console.log(
+      '[USB] Interfaces:',
+      JSON.stringify(
+        interfaces.map((iface) => ({
+          id: iface.id,
+          altSetting: iface.altSetting,
+          endpoints: (iface.endpoints || []).map((ep) => ({
+            address: ep.address,
+            direction: ep.direction,
+            transferType: ep.transferType
+          }))
+        }))
+      )
+    );
+
     let chosen = null;
 
     for (const iface of interfaces) {
-      const endpoints = iface.endpoints || [];
-
-      const endpoint = endpoints.find((ep) => {
-        const direction = String(ep.direction || '').toLowerCase();
-
-        const isOut =
-          direction === 'out' ||
-          (typeof ep.address === 'number' && (ep.address & 0x80) === 0);
-
-        const isBulk =
-          ep.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK ||
-          ep.transferType === 2;
-
-        return isOut && isBulk;
-      });
+      const endpoint = (iface.endpoints || []).find(
+        (ep) =>
+          (ep.direction === 'out' ||
+            (typeof ep.address === 'number' &&
+              (ep.address & 0x80) === 0)) &&
+          ep.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK
+      );
 
       if (endpoint) {
         chosen = { iface, endpoint };
@@ -532,27 +550,72 @@ async function printDirectUsb(deviceKey, buffer) {
     }
 
     if (!chosen) {
-      throw new Error(
-        'No USB bulk OUT endpoint was found. Check the USB endpoint property names.'
-      );
+      throw new Error('No USB bulk OUT endpoint was found.');
     }
 
-    console.log('Selected USB interface:', chosen.iface.id);
-    console.log('Selected USB endpoint:', chosen.endpoint.address);
+    console.log('[USB] Claiming interface:', chosen.iface.id);
 
     await new Promise((resolve, reject) => {
-      chosen.iface.claim((error) => error ? reject(error) : resolve());
+      chosen.iface.claim((error) => {
+        if (error) return reject(error);
+        resolve();
+      });
     });
 
+    claimedInterface = chosen.iface;
+
+    console.log(
+      '[USB] Transferring bytes:',
+      buffer.length,
+      'Endpoint:',
+      chosen.endpoint.address
+    );
+
     await new Promise((resolve, reject) => {
-      chosen.endpoint.transfer(buffer, (error) =>
-        error ? reject(error) : resolve()
-      );
+      chosen.endpoint.transfer(buffer, (error) => {
+        if (error) return reject(error);
+        resolve();
+      });
     });
+
+    console.log('[USB] Transfer completed.');
 
     return `Sent ${buffer.length} raw bytes directly to USB.`;
+  } catch (error) {
+    printError = error;
+    console.error('[USB] Print failed:', error);
+    throw error;
   } finally {
-    await closeUsbDevice(device);
+    if (claimedInterface) {
+      try {
+        await new Promise((resolve, reject) => {
+          claimedInterface.release((error) => {
+            if (error) return reject(error);
+            resolve();
+          });
+        });
+        console.log('[USB] Interface released.');
+      } catch (error) {
+        console.error('[USB] Interface release failed:', error);
+
+        if (!printError) {
+          throw error;
+        }
+      }
+    }
+
+    if (opened) {
+      try {
+        await closeUsbDevice(device);
+        console.log('[USB] Device closed.');
+      } catch (error) {
+        console.error('[USB] Device close failed:', error);
+
+        if (!printError) {
+          throw error;
+        }
+      }
+    }
   }
 }
 
