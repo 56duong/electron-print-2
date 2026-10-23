@@ -24,6 +24,8 @@ button:hover { filter: brightness(.96); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.secondary { background: #e9eef5; color: #26364b; }
 .button-align { display: flex; align-items: end; }
+label.check { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 13px; font-weight: 600; }
+label.check input { width: auto; }
 .hint { color: #68778b; font-size: 12px; line-height: 1.55; margin: 10px 0 0; }
 .status-panel { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; background: #eef3f8; border-radius: 12px; margin-top: 20px; }
 .status-dot { flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: #7b8797; margin-top: 5px; }

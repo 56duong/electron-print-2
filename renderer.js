@@ -23,14 +23,75 @@ function toBase64(buffer) {
 
 function makeEscPosReceipt() {
   const text = $('receiptText').value.replace(/\r\n/g, '\n');
-  const encoder = new TextEncoder();
-  const body = encoder.encode(text + '\n\n\n');
-  const output = new Uint8Array(2 + body.length + 3);
-  output.set([0x1b, 0x40], 0); // ESC @ initialize
-  output.set(body, 2);
-  output.set([0x1d, 0x56, 0x00], 2 + body.length); // GS V 0 cut (ignored by some printers)
-  return output;
+  const body = new TextEncoder().encode(text + '\n\n\n');
+  const cut = $('cutPaper').checked ? Uint8Array.of(0x1d, 0x56, 0x00) : new Uint8Array(0); // GS V 0 cut (ignored by some printers)
+  return EscPos.concat([Uint8Array.of(0x1b, 0x40), body, cut]); // ESC @ initialize
 }
+
+const PAPER_WIDTHS = {
+  print_size_k57_3c: 384,
+  print_size_k80_3c: 576,
+  print_size_k80_4c: 576,
+  print_size_a5: 1168,
+  print_size_a4: 1656
+};
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read the image file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Could not decode the image. Choose a PNG or JPEG file.'));
+    image.src = dataUrl;
+  });
+}
+
+async function makeEscPosImage() {
+  const file = $('imageFile').files[0];
+  if (!file) throw new Error('Choose an image to print.');
+
+  const image = await loadImage(await readFileAsDataUrl(file));
+  const width = PAPER_WIDTHS[$('imagePaper').value] || 576;
+  const height = Math.max(1, Math.round(width * image.naturalHeight / image.naturalWidth));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.fillStyle = '#ffffff'; // transparent areas print as white
+  context.fillRect(0, 0, width, height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(image, 0, 0, width, height);
+
+  const { data } = context.getImageData(0, 0, width, height);
+  return EscPos.encodeImage(data, width, height, {
+    mode: $('imageCommand').value,
+    cut: $('cutPaper').checked
+  });
+}
+
+async function buildPrintData() {
+  const copies = Math.max(1, Math.floor(Number($('copies').value) || 1));
+  const one = $('printMode').value === 'image' ? await makeEscPosImage() : makeEscPosReceipt();
+  return EscPos.concat(Array.from({ length: copies }, () => one));
+}
+
+function updatePrintMode() {
+  const image = $('printMode').value === 'image';
+  $('textOptions').hidden = image;
+  $('imageOptions').hidden = !image;
+}
+$('printMode').addEventListener('change', updatePrintMode);
+updatePrintMode();
 
 async function withBusy(button, action) {
   const oldText = button.textContent;
@@ -88,7 +149,7 @@ async function refreshSerialPorts() {
 }
 
 $('printIp').addEventListener('click', () => withBusy($('printIp'), async () => {
-  const dataBase64 = toBase64(makeEscPosReceipt());
+  const dataBase64 = toBase64(await buildPrintData());
   return window.printerApi.printIp({
     host: $('ipHost').value,
     port: $('ipPort').value,
@@ -101,7 +162,7 @@ $('printUsb').addEventListener('click', () => withBusy($('printUsb'), async () =
   if (!printerName) throw new Error('Select a printer queue first.');
   return window.printerApi.printUsb({
     printerName,
-    dataBase64: toBase64(makeEscPosReceipt())
+    dataBase64: toBase64(await buildPrintData())
   });
 }));
 
@@ -130,7 +191,7 @@ $('printDirectUsb').addEventListener('click', () => withBusy($('printDirectUsb')
   if (!deviceKey) throw new Error('Select a direct USB device first.');
   return window.printerApi.printDirectUsb({
     deviceKey,
-    dataBase64: toBase64(makeEscPosReceipt())
+    dataBase64: toBase64(await buildPrintData())
   });
 }));
 
@@ -140,7 +201,7 @@ $('printSerial').addEventListener('click', () => withBusy($('printSerial'), asyn
   return window.printerApi.printSerial({
     path: portPath,
     baudRate: $('baudRate').value,
-    dataBase64: toBase64(makeEscPosReceipt())
+    dataBase64: toBase64(await buildPrintData())
   });
 }));
 
@@ -321,7 +382,7 @@ $('printBle').addEventListener('click', () => withBusy($('printBle'), async () =
     throw new Error('Connect to the BLE printer first.');
   }
 
-  const bytes = makeEscPosReceipt();
+  const bytes = await buildPrintData();
   const chunkSize = Math.max(20, Math.min(512, Number($('bleChunk').value) || 180));
   const useResponse = Boolean(bleCharacteristic.properties.write);
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {

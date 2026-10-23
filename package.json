@@ -14,6 +14,8 @@
     "electron-builder": "^24.13.3"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
     "serialport": "10.5.0",
     "usb": "^2.15.0"
   },
@@ -27,16 +29,26 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "escpos.js",
       "index.html",
       "styles.css",
       "package.json"
     ],
     "mac": {
       "category": "public.app-category.utilities",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     }
-  }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }

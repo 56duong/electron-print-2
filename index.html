@@ -19,9 +19,25 @@
     </header>
 
     <section class="panel receipt-panel">
-      <h2>Test receipt</h2>
-      <label for="receiptText">Receipt text</label>
-      <textarea id="receiptText" rows="8">MY STORE
+      <h2>What to print</h2>
+      <div class="grid two">
+        <div>
+          <label for="printMode">Content</label>
+          <select id="printMode">
+            <option value="text">Text receipt</option>
+            <option value="image">Image (PNG or JPEG)</option>
+          </select>
+        </div>
+        <div>
+          <label for="copies">Copies</label>
+          <input id="copies" type="number" value="1" min="1" max="99">
+        </div>
+      </div>
+      <label class="check"><input id="cutPaper" type="checkbox" checked> Cut paper after printing</label>
+
+      <div id="textOptions">
+        <label for="receiptText">Receipt text</label>
+        <textarea id="receiptText" rows="8">MY STORE
 ------------------------------
 Test receipt
 Item                 1   10.00
@@ -30,7 +46,37 @@ TOTAL                    10.00
 
 Thank you!
 </textarea>
-      <p class="hint">This app wraps the text in basic ESC/POS commands. It is a simple test, not a full image-printing renderer.</p>
+        <p class="hint">This app wraps the text in basic ESC/POS commands.</p>
+      </div>
+
+      <div id="imageOptions" hidden>
+        <div class="grid two">
+          <div>
+            <label for="imageFile">Image</label>
+            <input id="imageFile" type="file" accept="image/png,image/jpeg">
+          </div>
+          <div>
+            <label for="imagePaper">Paper width</label>
+            <select id="imagePaper">
+              <option value="print_size_k57_3c">K57 (384 px)</option>
+              <option value="print_size_k80_3c" selected>K80 (576 px)</option>
+              <option value="print_size_k80_4c">K80 4-column (576 px)</option>
+              <option value="print_size_a5">A5 (1168 px)</option>
+              <option value="print_size_a4">A4 (1656 px)</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid two">
+          <div>
+            <label for="imageCommand">Image command</label>
+            <select id="imageCommand">
+              <option value="raster" selected>Raster (GS v 0), default</option>
+              <option value="bitimage">Bit image (ESC *), older printers</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint">The image is scaled to the paper width and printed in black and white. Use K57 for 58 mm paper and K80 for 80 mm. If a printer prints nothing or garbage, try the other image command.</p>
+      </div>
     </section>
 
     <section class="panel">
@@ -141,6 +187,7 @@ Thank you!
     <button id="refreshBleList" class="secondary">Refresh list</button>
     <button id="cancelBle" class="secondary">Cancel / stop scan</button>
   </dialog>
+  <script src="escpos.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

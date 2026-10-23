@@ -409,6 +409,77 @@ async function printRawToSystemQueue(printerName, buffer) {
   throw new Error(`System printer queue printing is not supported on ${process.platform}.`);
 }
 
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
+function readUsbString(device, index) {
+  if (!index) return Promise.resolve('');
+  return withTimeout(new Promise((resolve) => {
+    try {
+      device.getStringDescriptor(index, (error, value) => resolve(error ? '' : String(value || '').trim()));
+    } catch (_) {
+      resolve('');
+    }
+  }), 1500, '');
+}
+
+// macOS/Linux: list USB devices that look like printers, using the product name the device reports.
+async function listLibusbDirectDevices() {
+  const hex = (value) => Number(value || 0).toString(16).padStart(4, '0').toUpperCase();
+  const candidates = usb.getDeviceList().filter((device) => {
+    const descriptor = device.deviceDescriptor || {};
+    return Number(device.deviceAddress) > 0 && descriptor.bDeviceClass !== 9; // skip hubs
+  });
+
+  const describe = async (device) => {
+    const descriptor = device.deviceDescriptor || {};
+    const entry = {
+      key: `${device.busNumber}:${device.deviceAddress}:${descriptor.idVendor}:${descriptor.idProduct}`,
+      ids: `[${hex(descriptor.idVendor)}:${hex(descriptor.idProduct)}]`,
+      product: '',
+      manufacturer: '',
+      printerLike: descriptor.bDeviceClass === 7
+    };
+
+    let opened = false;
+    try {
+      device.open();
+      opened = true;
+      for (const iface of device.interfaces || []) {
+        const hasBulkOut = (iface.endpoints || []).some(
+          (ep) => (Number(ep.address) & 0x80) === 0 && Number(ep.transferType) === 2
+        );
+        if (iface.descriptor?.bInterfaceClass === 7 || hasBulkOut) entry.printerLike = true;
+      }
+      entry.product = await readUsbString(device, descriptor.iProduct);
+      entry.manufacturer = await readUsbString(device, descriptor.iManufacturer);
+    } catch (_) {
+      // Could not open (in use or not accessible): fall back to the VID/PID only.
+    } finally {
+      if (opened) {
+        try { device.close(); } catch (_) { }
+      }
+    }
+    return entry;
+  };
+
+  const entries = [];
+  for (const device of candidates) entries.push(await describe(device));
+
+  const toLabel = (entry) => {
+    const name = entry.product || (entry.manufacturer ? `${entry.manufacturer} device` : 'USB device');
+    const maker = entry.manufacturer && entry.product && !entry.product.toLowerCase().includes(entry.manufacturer.toLowerCase())
+      ? ` (${entry.manufacturer})`
+      : '';
+    return { key: entry.key, label: `${name}${maker} ${entry.ids}` };
+  };
+
+  const printers = entries.filter((entry) => entry.printerLike).map(toLabel);
+  // If nothing looks like a printer (for example the device could not be read), show everything.
+  return printers.length ? printers : entries.map(toLabel);
+}
+
 async function listDirectUsbDevices() {
   if (process.platform === 'win32') {
     const output = await runUsbPrintScript('list');
@@ -444,19 +515,7 @@ async function listDirectUsbDevices() {
     return devices;
   }
 
-  // macOS/Linux: keep using the existing libusb discovery.
-  return usb.getDeviceList()
-    .filter((device) => Number(device.deviceAddress) > 0)
-    .map((device) => {
-      const descriptor = device.deviceDescriptor || {};
-      const vendorId = Number(descriptor.idVendor || 0);
-      const productId = Number(descriptor.idProduct || 0);
-
-      return {
-        key: `${device.busNumber}:${device.deviceAddress}:${vendorId}:${productId}`,
-        label: `USB device — VID ${vendorId.toString(16).padStart(4, '0').toUpperCase()} / PID ${productId.toString(16).padStart(4, '0').toUpperCase()}`
-      };
-    });
+  return listLibusbDirectDevices();
 }
 
 async function closeUsbDevice(device) {
