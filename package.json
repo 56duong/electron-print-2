@@ -15,9 +15,7 @@
   },
   "dependencies": {
     "serialport": "10.5.0",
-    "usb": "^2.15.0",
-    "@node-escpos/core": "^0.6.0",
-    "@node-escpos/usb-adapter": "^0.3.1"
+    "usb": "^2.15.0"
   },
   "build": {
     "appId": "com.example.electronthermalprinter",
@@ -35,16 +33,10 @@
     ],
     "mac": {
       "category": "public.app-category.utilities",
-      "target": [
-        "dmg",
-        "zip"
-      ]
+      "target": ["dmg", "zip"]
     },
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
+      "target": ["nsis", "portable"]
     }
   }
 }
