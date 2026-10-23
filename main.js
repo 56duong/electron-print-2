@@ -474,6 +474,7 @@ async function closeUsbDevice(device) {
 // Needs these from the rest of your file: usb, USBPRINT_PATH_RE, runUsbPrintScript, closeUsbDevice.
 
 const USB_CHUNK_SIZE = 4096; // bytes per bulk transfer
+const USB_TRANSFER_TYPE_BULK = 2; // fixed by the USB spec; usb.LIBUSB_TRANSFER_TYPE_BULK can be undefined in some installs
 
 function usbTransfer(endpoint, data) {
   return new Promise((resolve, reject) => {
@@ -524,7 +525,7 @@ async function printDirectUsb(deviceKey, buffer) {
     let chosen = null;
     for (const iface of device.interfaces || []) {
       const endpoint = (iface.endpoints || []).find(
-        (ep) => (Number(ep.address) & 0x80) === 0 && Number(ep.transferType) === usb.LIBUSB_TRANSFER_TYPE_BULK
+        (ep) => (Number(ep.address) & 0x80) === 0 && Number(ep.transferType) === USB_TRANSFER_TYPE_BULK
       );
       if (endpoint) {
         chosen = { iface, endpoint };
