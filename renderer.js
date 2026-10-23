@@ -134,6 +134,32 @@ $('printDirectUsb').addEventListener('click', () => withBusy($('printDirectUsb')
   });
 }));
 
+function readSelectedImageAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve('');
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read the selected image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+$('printNodeEscposUsb').addEventListener('click', () => withBusy($('printNodeEscposUsb'), async () => {
+  const vendorId = $('escposVendorId').value.trim();
+  const productId = $('escposProductId').value.trim();
+  if (Boolean(vendorId) !== Boolean(productId)) {
+    throw new Error('Enter both Vendor ID and Product ID, or leave both blank.');
+  }
+  const imageFile = $('escposImage').files && $('escposImage').files[0];
+  const imageDataUrl = await readSelectedImageAsDataUrl(imageFile);
+  return window.printerApi.testNodeEscposUsb({
+    vendorId,
+    productId,
+    receiptText: $('escposReceiptText').value,
+    imageDataUrl
+  });
+}));
+
 $('printSerial').addEventListener('click', () => withBusy($('printSerial'), async () => {
   const portPath = $('serialPort').value;
   if (!portPath) throw new Error('Select a serial/Bluetooth SPP port first.');
@@ -349,16 +375,3 @@ $('refreshAll').addEventListener('click', async () => {
 refreshDirectUsbDevices();
 refreshUsbPrinters();
 refreshSerialPorts();
-
-async function requestArduinoDevice() {
-  setTimeout(async () => {
-    try {
-      const device = await navigator.usb.getDevices();
-      console.log('Connected USB devices:', device);
-    } catch (error) {
-      console.error(error);
-    }
-  }, 3000);
-}
-
-requestArduinoDevice();

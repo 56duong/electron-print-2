@@ -67,3 +67,10 @@ Web Bluetooth availability depends on the Electron/Chromium build and host platf
 - This is a starter test utility, not a production print manager.
 - Test with a harmless receipt first. Some printers interpret the final `GS V 0` command as a cut command.
 - The sample receipt uses UTF-8 text. ESC/POS printers often require a specific code page for Vietnamese or other non-ASCII text; encoding support must be added for your printer.
+
+
+## @node-escpos USB adapter test
+
+A separate section in the app tests `@node-escpos/core` with `@node-escpos/usb-adapter`. It can print text and an optional PNG/JPEG image. Leave VID/PID blank to let the adapter discover a printer, or enter hexadecimal IDs (for the Xprinter test: VID `1FC9`, PID `2016`).
+
+Install dependencies with `npm install`, then run `npm start`. Native USB access depends on the OS, USB permissions, and the printer driver; this test is independent of the existing Windows SetupAPI direct-print method.

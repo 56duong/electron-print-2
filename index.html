@@ -65,7 +65,30 @@ Thank you!
     </section>
 
     <section class="panel">
-      <h2>3. USB printer (system printer queue)</h2>
+      <h2>3. USB printer (@node-escpos USB adapter)</h2>
+      <p class="hint">Separate test using <code>@node-escpos/core</code> and <code>@node-escpos/usb-adapter</code>. It does not use the existing direct-USB or system-queue code.</p>
+      <div class="grid two">
+        <div>
+          <label for="escposVendorId">Vendor ID (hex, optional)</label>
+          <input id="escposVendorId" placeholder="e.g. 1FC9">
+        </div>
+        <div>
+          <label for="escposProductId">Product ID (hex, optional)</label>
+          <input id="escposProductId" placeholder="e.g. 2016">
+        </div>
+      </div>
+      <label for="escposReceiptText">Text to print</label>
+      <textarea id="escposReceiptText" rows="4">USB adapter test
+Xprinter XP-350BM
+Hello from @node-escpos!</textarea>
+      <label for="escposImage">Optional image (PNG or JPEG)</label>
+      <input id="escposImage" type="file" accept="image/png,image/jpeg,.jpg,.jpeg">
+      <button id="printNodeEscposUsb">Test @node-escpos USB adapter</button>
+      <p class="hint">Leave both IDs blank to try automatic discovery. For your Xprinter, try VID <code>1FC9</code> and PID <code>2016</code>. This test may fail if the OS/driver prevents the adapter from opening the USB interface.</p>
+    </section>
+
+    <section class="panel">
+      <h2>4. USB printer (system printer queue)</h2>
       <div class="grid two">
         <div>
           <label for="usbPrinter">Printer queue</label>
@@ -80,7 +103,7 @@ Thank you!
     </section>
 
     <section class="panel">
-      <h2>4. Bluetooth Classic (SPP / serial)</h2>
+      <h2>5. Bluetooth Classic (SPP / serial)</h2>
       <div class="grid two">
         <div>
           <label for="serialPort">Serial port</label>
@@ -99,7 +122,7 @@ Thank you!
     </section>
 
     <section class="panel">
-      <h2>5. Bluetooth Low Energy (BLE)</h2>
+      <h2>6. Bluetooth Low Energy (BLE)</h2>
       <p class="hint">Scan and select a nearby BLE device. The app checks several common printer service UUIDs automatically. Some printers use vendor-specific UUIDs that are not discoverable without the correct UUID.</p>
       <div class="grid two">
         <div>

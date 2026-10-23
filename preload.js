@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('printerApi', {
   printIp: (config) => ipcRenderer.invoke('print-ip', config),
+  testNodeEscposUsb: (config) => ipcRenderer.invoke('test-node-escpos-usb', config),
   listUsbPrinters: () => ipcRenderer.invoke('list-usb-printers'),
   listDirectUsbDevices: () => ipcRenderer.invoke('list-direct-usb-devices'),
   printDirectUsb: (config) => ipcRenderer.invoke('print-direct-usb', config),

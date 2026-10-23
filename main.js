@@ -6,6 +6,8 @@ const os = require('os');
 const { spawn } = require('child_process');
 const { SerialPort } = require('serialport');
 const usb = require('usb');
+const { Printer, Image } = require('@node-escpos/core');
+const USBAdapter = require('@node-escpos/usb-adapter');
 
 let mainWindow;
 let pendingBluetoothCallback = null;
@@ -59,6 +61,70 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
 
+ipcMain.handle('test-node-escpos-usb', async (_event, { receiptText, vendorId, productId, imageDataUrl }) => {
+  const text = String(receiptText || 'NODE-ESCPOS USB TEST\n\nHello from Electron!');
+  const vid = String(vendorId || '').trim() ? Number.parseInt(String(vendorId).trim().replace(/^0x/i, ''), 16) : null;
+  const pid = String(productId || '').trim() ? Number.parseInt(String(productId).trim().replace(/^0x/i, ''), 16) : null;
+
+  if (vid !== null && (!Number.isInteger(vid) || vid < 0 || vid > 0xffff)) {
+    throw new Error('Vendor ID must be a 4-digit hexadecimal value, for example 1FC9.');
+  }
+  if (pid !== null && (!Number.isInteger(pid) || pid < 0 || pid > 0xffff)) {
+    throw new Error('Product ID must be a 4-digit hexadecimal value, for example 2016.');
+  }
+  if ((vid === null) !== (pid === null)) {
+    throw new Error('Enter both Vendor ID and Product ID, or leave both blank for automatic discovery.');
+  }
+
+  let imagePath = null;
+  let device = null;
+  let opened = false;
+  try {
+    if (imageDataUrl) {
+      const match = /^data:image\/(png|jpeg|jpg);base64,([\s\S]+)$/i.exec(String(imageDataUrl));
+      if (!match) throw new Error('The image must be a PNG or JPEG file.');
+      const extension = match[1].toLowerCase() === 'png' ? '.png' : '.jpg';
+      imagePath = path.join(os.tmpdir(), `node-escpos-test-${Date.now()}${extension}`);
+      fs.writeFileSync(imagePath, Buffer.from(match[2], 'base64'));
+    }
+
+    // Blank VID/PID lets the adapter discover the first compatible USB printer.
+    device = vid === null ? new USBAdapter() : new USBAdapter(vid, pid);
+    await new Promise((resolve, reject) => {
+      device.open((error) => error ? reject(error) : resolve());
+    });
+    opened = true;
+
+    let printer = new Printer(device, { encoding: 'GB18030' });
+    printer
+      .align('ct')
+      .text('NODE-ESCPOS USB TEST')
+      .align('lt')
+      .text(text);
+
+    if (imagePath) {
+      const image = await Image.load(imagePath);
+      printer.align('ct');
+      printer = await printer.image(image, 's8');
+    }
+
+    printer.cut().close();
+    return `node-escpos USB test sent${imagePath ? ' with image' : ''}${vid !== null ? ` to VID ${vid.toString(16).toUpperCase()} / PID ${pid.toString(16).toUpperCase()}` : ' using automatic USB discovery'}.`;
+  } catch (error) {
+    if (device && !opened) {
+      try { device.close(); } catch (_) {}
+    } else if (device && opened) {
+      try { device.close(); } catch (_) {}
+    }
+    const message = error && error.message ? error.message : String(error);
+    throw new Error(`node-escpos USB adapter failed: ${message}`);
+  } finally {
+    if (imagePath) {
+      try { fs.rmSync(imagePath, { force: true }); } catch (_) {}
+    }
+  }
+});
+
 ipcMain.handle('print-ip', async (_event, { host, port, dataBase64 }) => {
   const hostValue = String(host || '').trim();
   const portValue = Number(port || 9100);
@@ -103,189 +169,6 @@ function runCommand(command, args, options = {}) {
     });
   });
 }
-
-
-const USBPRINT_PS = `
-param([string]$Mode, [string]$Path, [string]$DataFile)
-
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-
-Add-Type -TypeDefinition @"
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
-using Microsoft.Win32.SafeHandles;
-
-public class UsbPrint {
-  static Guid G = new Guid("28d78fad-5a12-11d1-ae5b-0000f803a8c2");
-
-  [StructLayout(LayoutKind.Sequential)]
-  struct SP_DEVICE_INTERFACE_DATA {
-    public int cbSize;
-    public Guid InterfaceClassGuid;
-    public int Flags;
-    public IntPtr Reserved;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  struct SP_DEVINFO_DATA {
-    public int cbSize;
-    public Guid ClassGuid;
-    public int DevInst;
-    public IntPtr Reserved;
-  }
-
-  [DllImport("setupapi.dll", SetLastError=true)]
-  static extern IntPtr SetupDiGetClassDevs(
-    ref Guid g, IntPtr e, IntPtr h, int flags);
-
-  [DllImport("setupapi.dll", SetLastError=true)]
-  static extern bool SetupDiEnumDeviceInterfaces(
-    IntPtr s, IntPtr d, ref Guid g, int i,
-    ref SP_DEVICE_INTERFACE_DATA di);
-
-  [DllImport("setupapi.dll", CharSet=CharSet.Unicode, SetLastError=true)]
-  static extern bool SetupDiGetDeviceInterfaceDetail(
-    IntPtr s, ref SP_DEVICE_INTERFACE_DATA di,
-    IntPtr detail, int size, out int req, ref SP_DEVINFO_DATA dd);
-
-  [DllImport("setupapi.dll", CharSet=CharSet.Unicode, SetLastError=true)]
-  static extern bool SetupDiGetDeviceRegistryProperty(
-    IntPtr s, ref SP_DEVINFO_DATA dd, int prop,
-    out int type, StringBuilder buf, int size, out int req);
-
-  [DllImport("setupapi.dll")]
-  static extern bool SetupDiDestroyDeviceInfoList(IntPtr s);
-
-  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
-  static extern SafeFileHandle CreateFile(
-    string n, uint access, uint share, IntPtr sa,
-    uint disp, uint flags, IntPtr t);
-
-  static string Prop(IntPtr set, ref SP_DEVINFO_DATA dd, int prop) {
-    int type, req;
-    var sb = new StringBuilder(512);
-
-    return SetupDiGetDeviceRegistryProperty(
-      set, ref dd, prop, out type, sb, 1024, out req)
-      ? sb.ToString() : null;
-  }
-
-  public static string[] List() {
-    var result = new List<string>();
-    Guid g = G;
-
-    // DIGCF_PRESENT | DIGCF_DEVICEINTERFACE
-    IntPtr set = SetupDiGetClassDevs(
-      ref g, IntPtr.Zero, IntPtr.Zero, 0x12);
-
-    if (set == new IntPtr(-1))
-      throw new Win32Exception(Marshal.GetLastWin32Error());
-
-    try {
-      for (int i = 0; ; i++) {
-        var di = new SP_DEVICE_INTERFACE_DATA();
-        di.cbSize = Marshal.SizeOf(typeof(SP_DEVICE_INTERFACE_DATA));
-
-        if (!SetupDiEnumDeviceInterfaces(
-          set, IntPtr.Zero, ref g, i, ref di))
-          break;
-
-        var dd = new SP_DEVINFO_DATA();
-        dd.cbSize = Marshal.SizeOf(typeof(SP_DEVINFO_DATA));
-
-        int req;
-        SetupDiGetDeviceInterfaceDetail(
-          set, ref di, IntPtr.Zero, 0, out req, ref dd);
-
-        if (req <= 0) continue;
-
-        IntPtr buf = Marshal.AllocHGlobal(req);
-
-        try {
-          Marshal.WriteInt32(buf, IntPtr.Size == 8 ? 8 : 6);
-
-          if (!SetupDiGetDeviceInterfaceDetail(
-            set, ref di, buf, req, out req, ref dd))
-            continue;
-
-          string path = Marshal.PtrToStringUni(
-            new IntPtr(buf.ToInt64() + 4));
-
-          string name =
-            Prop(set, ref dd, 0x0C) ??
-            Prop(set, ref dd, 0x00) ??
-            "USB printer";
-
-          result.Add(path + "\t" + name);
-        }
-        finally {
-          Marshal.FreeHGlobal(buf);
-        }
-      }
-    }
-    finally {
-      SetupDiDestroyDeviceInfoList(set);
-    }
-
-    return result.ToArray();
-  }
-
-  public static void Write(string path, byte[] data) {
-    SafeFileHandle h = CreateFile(
-      path, 0x40000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-
-    if (h.IsInvalid)
-      throw new Win32Exception(Marshal.GetLastWin32Error());
-
-    using (var fs = new FileStream(h, FileAccess.Write, 4096, false)) {
-      fs.Write(data, 0, data.Length);
-      fs.Flush();
-    }
-  }
-}
-"@
-
-if ($Mode -eq 'list') {
-  [UsbPrint]::List()
-} else {
-  $bytes = [System.IO.File]::ReadAllBytes($DataFile)
-  [UsbPrint]::Write($Path, $bytes)
-}
-`;
-
-const USBPRINT_PATH_RE =
-  /^\\\\\?\\usb#.+#\{28d78fad-5a12-11d1-ae5b-0000f803a8c2\}$/i;
-
-async function runUsbPrintScript(mode, devicePath, jobs) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'usbprint-'));
-  const ps1 = path.join(dir, 'usbprint.ps1');
-  const bin = path.join(dir, 'job.bin');
-
-  try {
-    fs.writeFileSync(ps1, USBPRINT_PS, 'utf8');
-
-    const args = [
-      '-NoProfile',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', ps1,
-      '-Mode', mode
-    ];
-
-    if (mode === 'write') {
-      fs.writeFileSync(bin, jobs);
-      args.push('-Path', devicePath, '-DataFile', bin);
-    }
-
-    return await runCommand('powershell.exe', args);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-
 
 async function listUsbPrinters() {
   if (process.platform === 'win32') {
@@ -415,61 +298,20 @@ function directUsbDeviceKey(device) {
   return `${device.busNumber}:${device.deviceAddress}:${descriptor.idVendor}:${descriptor.idProduct}`;
 }
 
-function directUsbDeviceKey(device) {
-  const descriptor = device.deviceDescriptor || {};
-
-  return `${device.busNumber}:${device.deviceAddress}:${descriptor.idVendor}:${descriptor.idProduct}`;
-}
-
-
 async function listDirectUsbDevices() {
-  if (process.platform === 'win32') {
-    const output = await runUsbPrintScript('list');
-    const devices = [];
-
-    for (const line of output.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-
-      const separator = line.indexOf('\t');
-      if (separator < 0) continue;
-
-      const devicePath = line.slice(0, separator).trim();
-      const name = line.slice(separator + 1).trim();
-
-      if (!USBPRINT_PATH_RE.test(devicePath)) continue;
-
-      const match =
-        /usb#vid_([0-9a-f]{4})&pid_([0-9a-f]{4})/i.exec(devicePath);
-
-      if (!match) continue;
-
-      const vendorId = match[1].toUpperCase();
-      const productId = match[2].toUpperCase();
-
-      const printerName = name || 'USB printer';
-
-      devices.push({
-        key: `usbprint:${devicePath}`,
-        label: `${printerName} [${vendorId}:${productId}] (direct USB)`
-      });
-    }
-
-    return devices;
-  }
-
-  // macOS/Linux: keep using the existing libusb discovery.
-  return usb.getDeviceList()
-    .filter((device) => Number(device.deviceAddress) > 0)
-    .map((device) => {
-      const descriptor = device.deviceDescriptor || {};
-      const vendorId = Number(descriptor.idVendor || 0);
-      const productId = Number(descriptor.idProduct || 0);
-
-      return {
-        key: `${device.busNumber}:${device.deviceAddress}:${vendorId}:${productId}`,
-        label: `USB device — VID ${vendorId.toString(16).padStart(4, '0').toUpperCase()} / PID ${productId.toString(16).padStart(4, '0').toUpperCase()}`
-      };
-    });
+  return usb.getDeviceList().map((device) => {
+    const descriptor = device.deviceDescriptor || {};
+    const vendorId = Number(descriptor.idVendor || 0);
+    const productId = Number(descriptor.idProduct || 0);
+    return {
+      key: directUsbDeviceKey(device),
+      busNumber: device.busNumber,
+      deviceAddress: device.deviceAddress,
+      vendorId,
+      productId,
+      label: `USB device — VID ${vendorId.toString(16).padStart(4, '0').toUpperCase()} / PID ${productId.toString(16).padStart(4, '0').toUpperCase()} (Bus ${device.busNumber}, Address ${device.deviceAddress})`
+    };
+  });
 }
 
 async function closeUsbDevice(device) {
@@ -483,72 +325,42 @@ async function closeUsbDevice(device) {
   try { device.close(); } catch (_) {}
 }
 
-
 async function printDirectUsb(deviceKey, buffer) {
-  if (!deviceKey) {
-    throw new Error('Select a direct USB device first.');
-  }
-
-  if (process.platform === 'win32') {
-    if (!deviceKey.startsWith('usbprint:')) {
-      throw new Error('Select a Windows direct USB printer from the refreshed list.');
-    }
-
-    const devicePath = deviceKey.slice('usbprint:'.length);
-
-    if (!USBPRINT_PATH_RE.test(devicePath)) {
-      throw new Error('Invalid USB printer device path.');
-    }
-
-    await runUsbPrintScript('write', devicePath, buffer);
-
-    return `Sent ${buffer.length} raw bytes directly to the USB printer.`;
-  }
-
-  // Keep your existing non-Windows libusb printing code below this point.
-  const device = usb.getDeviceList().find(
-    (item) =>
-      `${item.busNumber}:${item.deviceAddress}:${item.deviceDescriptor?.idVendor}:${item.deviceDescriptor?.idProduct}` === deviceKey
-  );
-
-  if (!device) {
-    throw new Error('USB device not found. Unplug it, reconnect it, and refresh the list.');
-  }
+  if (!deviceKey) throw new Error('Select a direct USB device first.');
+  const device = usb.getDeviceList().find((item) => directUsbDeviceKey(item) === deviceKey);
+  if (!device) throw new Error('USB device not found. Unplug/reconnect it and refresh the USB device list.');
 
   device.open();
-
   try {
     const interfaces = device.interfaces || [];
     let chosen = null;
-
     for (const iface of interfaces) {
-      const endpoint = (iface.endpoints || []).find(
-        (item) =>
-          item.direction === 'out' &&
-          item.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK
+      const endpoint = (iface.endpoints || []).find((item) =>
+        item.direction === 'out' && item.transferType === usb.LIBUSB_TRANSFER_TYPE_BULK
       );
-
       if (endpoint) {
         chosen = { iface, endpoint };
         break;
       }
     }
-
     if (!chosen) {
-      throw new Error('No USB bulk OUT endpoint was found.');
+      throw new Error('No USB bulk OUT endpoint was found. This device may not expose a raw USB printer interface.');
+    }
+
+    try {
+      await new Promise((resolve, reject) => {
+        chosen.iface.claim((err) => err ? reject(err) : resolve());
+      });
+    } catch (err) {
+      throw new Error(`Could not claim USB interface: ${err.message}. On Windows, the printer driver may own this interface; direct USB access may require a compatible WinUSB/libusb driver.`);
     }
 
     await new Promise((resolve, reject) => {
-      chosen.iface.claim((error) => error ? reject(error) : resolve());
+      chosen.endpoint.transfer(buffer, (err) => err ? reject(err) : resolve());
     });
-
-    await new Promise((resolve, reject) => {
-      chosen.endpoint.transfer(buffer, (error) =>
-        error ? reject(error) : resolve()
-      );
-    });
-
-    return `Sent ${buffer.length} raw bytes directly to USB.`;
+    const vendorId = Number(device.deviceDescriptor.idVendor || 0).toString(16).padStart(4, '0').toUpperCase();
+    const productId = Number(device.deviceDescriptor.idProduct || 0).toString(16).padStart(4, '0').toUpperCase();
+    return `Sent ${buffer.length} raw bytes directly to USB device (VID ${vendorId}, PID ${productId}).`;
   } finally {
     await closeUsbDevice(device);
   }
