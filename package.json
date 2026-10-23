@@ -1,0 +1,42 @@
+{
+  "name": "electron-thermal-printer",
+  "version": "1.0.0",
+  "description": "A cross-platform thermal printer test app for IP, direct USB, printer queues, Bluetooth SPP, and BLE.",
+  "main": "main.js",
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "start": "electron .",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "24.8.6",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "serialport": "10.5.0",
+    "usb": "^2.15.0"
+  },
+  "build": {
+    "appId": "com.example.electronthermalprinter",
+    "productName": "Thermal Printer Test",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    }
+  }
+}
